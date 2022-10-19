@@ -1,5 +1,5 @@
 """Inference demo of directional point detector."""
-import math
+import math, os
 import cv2 as cv
 import numpy as np
 import torch
@@ -118,39 +118,6 @@ def inference_slots(marking_points):
                 slots.append((j, i))
     return slots
 
-
-def detect_video(detector, device, args):
-    """Demo for detecting video."""
-    timer = Timer()
-    input_video = cv.VideoCapture(args.video)
-    frame_width = int(input_video.get(cv.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(input_video.get(cv.CAP_PROP_FRAME_HEIGHT))
-    output_video = cv.VideoWriter()
-    if args.save:
-        output_video.open('record.avi', cv.VideoWriter_fourcc(*'XVID'),
-                          input_video.get(cv.CAP_PROP_FPS),
-                          (frame_width, frame_height), True)
-    frame = np.empty([frame_height, frame_width, 3], dtype=np.uint8)
-    while input_video.read(frame)[0]:
-        timer.tic()
-        pred_points = detect_marking_points(
-            detector, frame, args.thresh, device)
-        slots = None
-        if pred_points and args.inference_slot:
-            marking_points = list(list(zip(*pred_points))[1])
-            slots = inference_slots(marking_points)
-        timer.toc()
-        plot_points(frame, pred_points)
-        plot_slots(frame, pred_points, slots)
-        cv.imshow('demo', frame)
-        cv.waitKey(1)
-        if args.save:
-            output_video.write(frame)
-    print("Average time: ", timer.calc_average_time(), "s.")
-    input_video.release()
-    output_video.release()
-
-
 def detect_image(detector, device, args):
     """Demo for detecting images."""
     timer = Timer()
@@ -172,6 +139,28 @@ def detect_image(detector, device, args):
         # if args.save:
         cv.imwrite('save.jpg', image, [int(cv.IMWRITE_JPEG_QUALITY), 100])
 
+def detect_carla_image(detector, device, args, carla_ipm_dir):
+    output_dir = "./output/"
+    files = os.listdir(carla_ipm_dir)
+    counter = 0
+    for fname in files:
+        counter += 1
+        fullpath = carla_ipm_dir + "/" + fname
+        print("evaluate [{}] {}".format(counter, fullpath))
+        output_fullpath = output_dir + "/" + fname
+
+        image = cv.imread(fullpath)
+        pred_points = detect_marking_points(detector, image, args.thresh, device)
+        slots = None
+        if pred_points and args.inference_slot:
+            marking_points = list(list(zip(*pred_points))[1])
+            slots = inference_slots(marking_points)
+        plot_points(image, pred_points)
+        plot_slots(image, pred_points, slots)
+        # cv.imshow('demo', image)
+        # cv.waitKey(1)
+        # if args.save:
+        cv.imwrite(output_fullpath, image, [int(cv.IMWRITE_JPEG_QUALITY), 100])
 
 def inference_detector(args):
     """Inference demo of directional point detector."""
@@ -182,11 +171,11 @@ def inference_detector(args):
         3, args.depth_factor, config.NUM_FEATURE_MAP_CHANNEL).to(device)
     dp_detector.load_state_dict(torch.load(args.detector_weights))
     dp_detector.eval()
-    if args.mode == "image":
-        detect_image(dp_detector, device, args)
-    elif args.mode == "video":
-        detect_video(dp_detector, device, args)
-
+    detect_carla_image(dp_detector, device, args, carla_ipm_dir="/home/hugoliu/github/dataset/carla_ipm")
 
 if __name__ == '__main__':
-    inference_detector(config.get_parser_for_inference().parse_args())
+    args = config.get_parser_for_inference().parse_args()
+    args.detector_weights = "weights/dmpr_pretrained_weights.pth"
+    args.inference_slot = True
+    inference_detector(args)
+   

@@ -94,7 +94,7 @@ def get_parser_for_ps_evaluation():
 def get_parser_for_inference():
     """Return argument parser for inference."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', required=True, choices=['image', 'video'],
+    parser.add_argument('--mode', required=False, choices=['image', 'video'],
                         help="Inference image or video.")
     parser.add_argument('--video',
                         help="Video path if you choose to inference video.")
