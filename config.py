@@ -61,7 +61,7 @@ def get_parser_for_training():
                         help="Number of epochs to train for.")
     parser.add_argument('--lr', type=float, default=1e-4,
                         help="The learning rate of back propagation.")
-    parser.add_argument('--enable_visdom', action='store_true',
+    parser.add_argument('--enable_visdom', action='store_false',
                         help="Enable Visdom to visualize training progress")
     add_common_arguments(parser)
     return parser
@@ -72,7 +72,7 @@ def get_parser_for_evaluation():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_directory', required=True,
                         help="The location of dataset.")
-    parser.add_argument('--enable_visdom', action='store_true',
+    parser.add_argument('--enable_visdom', action='store_false',
                         help="Enable Visdom to visualize training progress")
     add_common_arguments(parser)
     return parser
@@ -85,7 +85,7 @@ def get_parser_for_ps_evaluation():
                         help="The location of dataset.")
     parser.add_argument('--image_directory', required=True,
                         help="The location of dataset.")
-    parser.add_argument('--enable_visdom', action='store_true',
+    parser.add_argument('--enable_visdom', action='store_false',
                         help="Enable Visdom to visualize training progress")
     add_common_arguments(parser)
     return parser

@@ -1,5 +1,5 @@
 """Inference demo of directional point detector."""
-import math, os
+import math, os, json
 import cv2 as cv
 import numpy as np
 import torch
@@ -8,79 +8,7 @@ import config
 from data import get_predicted_points, pair_marking_points, calc_point_squre_dist, pass_through_third_point
 from model import DirectionalPointDetector
 from util import Timer
-
-
-def plot_points(image, pred_points):
-    """Plot marking points on the image."""
-    if not pred_points:
-        return
-    height = image.shape[0]
-    width = image.shape[1]
-    for confidence, marking_point in pred_points:
-        p0_x = width * marking_point.x - 0.5
-        p0_y = height * marking_point.y - 0.5
-        cos_val = math.cos(marking_point.direction)
-        sin_val = math.sin(marking_point.direction)
-        p1_x = p0_x + 50*cos_val
-        p1_y = p0_y + 50*sin_val
-        p2_x = p0_x - 50*sin_val
-        p2_y = p0_y + 50*cos_val
-        p3_x = p0_x + 50*sin_val
-        p3_y = p0_y - 50*cos_val
-        p0_x = int(round(p0_x))
-        p0_y = int(round(p0_y))
-        p1_x = int(round(p1_x))
-        p1_y = int(round(p1_y))
-        p2_x = int(round(p2_x))
-        p2_y = int(round(p2_y))
-        cv.line(image, (p0_x, p0_y), (p1_x, p1_y), (0, 0, 255), 2)
-        cv.putText(image, str(confidence), (p0_x, p0_y),
-                   cv.FONT_HERSHEY_PLAIN, 1, (0, 0, 0))
-        if marking_point.shape > 0.5:
-            cv.line(image, (p0_x, p0_y), (p2_x, p2_y), (0, 0, 255), 2)
-        else:
-            p3_x = int(round(p3_x))
-            p3_y = int(round(p3_y))
-            cv.line(image, (p2_x, p2_y), (p3_x, p3_y), (0, 0, 255), 2)
-
-
-def plot_slots(image, pred_points, slots):
-    """Plot parking slots on the image."""
-    if not pred_points or not slots:
-        return
-    marking_points = list(list(zip(*pred_points))[1])
-    height = image.shape[0]
-    width = image.shape[1]
-    for slot in slots:
-        point_a = marking_points[slot[0]]
-        point_b = marking_points[slot[1]]
-        p0_x = width * point_a.x - 0.5
-        p0_y = height * point_a.y - 0.5
-        p1_x = width * point_b.x - 0.5
-        p1_y = height * point_b.y - 0.5
-        vec = np.array([p1_x - p0_x, p1_y - p0_y])
-        vec = vec / np.linalg.norm(vec)
-        distance = calc_point_squre_dist(point_a, point_b)
-        if config.VSLOT_MIN_DIST <= distance <= config.VSLOT_MAX_DIST:
-            separating_length = config.LONG_SEPARATOR_LENGTH
-        elif config.HSLOT_MIN_DIST <= distance <= config.HSLOT_MAX_DIST:
-            separating_length = config.SHORT_SEPARATOR_LENGTH
-        p2_x = p0_x + height * separating_length * vec[1]
-        p2_y = p0_y - width * separating_length * vec[0]
-        p3_x = p1_x + height * separating_length * vec[1]
-        p3_y = p1_y - width * separating_length * vec[0]
-        p0_x = int(round(p0_x))
-        p0_y = int(round(p0_y))
-        p1_x = int(round(p1_x))
-        p1_y = int(round(p1_y))
-        p2_x = int(round(p2_x))
-        p2_y = int(round(p2_y))
-        p3_x = int(round(p3_x))
-        p3_y = int(round(p3_y))
-        cv.line(image, (p0_x, p0_y), (p1_x, p1_y), (255, 0, 0), 2)
-        cv.line(image, (p0_x, p0_y), (p2_x, p2_y), (255, 0, 0), 2)
-        cv.line(image, (p1_x, p1_y), (p3_x, p3_y), (255, 0, 0), 2)
-
+from carla.post_process import PostProcess
 
 def preprocess_image(image):
     """Preprocess numpy image to torch tensor."""
@@ -88,94 +16,99 @@ def preprocess_image(image):
         image = cv.resize(image, (512, 512))
     return torch.unsqueeze(ToTensor()(image), 0)
 
-
 def detect_marking_points(detector, image, thresh, device):
     """Given image read from opencv, return detected marking points."""
     prediction = detector(preprocess_image(image).to(device))
     return get_predicted_points(prediction[0], thresh)
 
-
-def inference_slots(marking_points):
-    """Inference slots based on marking points."""
-    num_detected = len(marking_points)
-    slots = []
-    for i in range(num_detected - 1):
-        for j in range(i + 1, num_detected):
-            point_i = marking_points[i]
-            point_j = marking_points[j]
-            # Step 1: length filtration.
-            distance = calc_point_squre_dist(point_i, point_j)
-            if not (config.VSLOT_MIN_DIST <= distance <= config.VSLOT_MAX_DIST
-                    or config.HSLOT_MIN_DIST <= distance <= config.HSLOT_MAX_DIST):
-                continue
-            # Step 2: pass through filtration.
-            if pass_through_third_point(marking_points, i, j):
-                continue
-            result = pair_marking_points(point_i, point_j)
-            if result == 1:
-                slots.append((i, j))
-            elif result == -1:
-                slots.append((j, i))
-    return slots
-
-def detect_image(detector, device, args):
-    """Demo for detecting images."""
-    timer = Timer()
-    while True:
-        image_file = input('Enter image file path: ')
-        image = cv.imread(image_file)
-        timer.tic()
-        pred_points = detect_marking_points(
-            detector, image, args.thresh, device)
-        slots = None
-        if pred_points and args.inference_slot:
-            marking_points = list(list(zip(*pred_points))[1])
-            slots = inference_slots(marking_points)
-        timer.toc()
-        plot_points(image, pred_points)
-        plot_slots(image, pred_points, slots)
-        # cv.imshow('demo', image)
-        # cv.waitKey(1)
-        # if args.save:
-        cv.imwrite('save.jpg', image, [int(cv.IMWRITE_JPEG_QUALITY), 100])
-
 def detect_carla_image(detector, device, args, carla_ipm_dir):
     output_dir = "./output/"
     files = os.listdir(carla_ipm_dir)
     counter = 0
+    results_list = []
     for fname in files:
-        counter += 1
         fullpath = carla_ipm_dir + "/" + fname
         print("evaluate [{}] {}".format(counter, fullpath))
         output_fullpath = output_dir + "/" + fname
 
         image = cv.imread(fullpath)
         pred_points = detect_marking_points(detector, image, args.thresh, device)
-        slots = None
+        # slots = None
         if pred_points and args.inference_slot:
-            marking_points = list(list(zip(*pred_points))[1])
-            slots = inference_slots(marking_points)
-        plot_points(image, pred_points)
-        plot_slots(image, pred_points, slots)
+            pass
+            # marking_points = list(list(zip(*pred_points))[1])
+            # slots = inference_slots(marking_points)
+
+        # format json
+        result = {}
+        result["counter"] = counter
+        result["img_path"] = fullpath
+        result["height"] = int(image.shape[0])
+        result["width"] = int(image.shape[1])
+        marking_points = []
+        idx = 0
+        for conf, marking_point in pred_points:
+            mp = {}
+            mp["idx"] = idx
+            idx += 1
+            mp["conf"] = float(conf)
+            mp["type"] = float(marking_point.shape)
+            mp["x"] = float(marking_point.x)
+            mp["y"] = float(marking_point.y)
+            mp["direction"] = float(marking_point.direction)
+            mp["p0x"] = int(result["width"] * mp["x"] - 0.5)
+            mp["p0y"] = int(result["height"] * mp["y"] - 0.5)
+            # mp["dir_deg"] = float(mp["direction"] * 57.3)
+            # mp["dir_quad"] = 0.0
+            # if mp["direction"] >= 0.0 and mp["direction"] < math.pi/2:
+            #     mp["dir_quad"] = 0.0
+            # elif mp["direction"] >= math.pi/2 and mp["direction"] < math.pi:
+            #     mp["dir_quad"] = -math.pi/2
+            # elif mp["direction"] >= -math.pi/2 and mp["direction"] < 0.0:
+            #     mp["dir_quad"] = math.pi/2
+            # elif mp["direction"] >= -math.pi and mp["direction"] < -math.pi/2:
+            #     mp["dir_quad"] = math.pi
+            # mp["dir_quad0"] = mp["direction"] + mp["dir_quad"]
+            # mp["direction"] = mp["dir_quad0"]
+            marking_points.append(mp)
+        result["marking_points"] = marking_points
+        results_list.append(result)
+        post_processor = PostProcess(result)
+        res = post_processor.calc_mean_direction()
+        if res:
+            post_processor.fix_direction()
+        post_processor.plot_points(image)
+
+        counter += 1
+        # plot_points(image, result)
+        # plot_slots(image, pred_points, slots)
         # cv.imshow('demo', image)
         # cv.waitKey(1)
         # if args.save:
         cv.imwrite(output_fullpath, image, [int(cv.IMWRITE_JPEG_QUALITY), 100])
+    # print(results_list)
 
-def inference_detector(args):
+    # save json
+    json_file_path = output_dir + "/results.json"
+    with open(json_file_path, 'wt') as fd:
+        for dict in results_list:
+            json.dump(dict, fd, ensure_ascii=False)
+            fd.write("\n")
+
+def main(args):
     """Inference demo of directional point detector."""
     args.cuda = not args.disable_cuda and torch.cuda.is_available()
     device = torch.device('cuda:' + str(args.gpu_id) if args.cuda else 'cpu')
     torch.set_grad_enabled(False)
     dp_detector = DirectionalPointDetector(
         3, args.depth_factor, config.NUM_FEATURE_MAP_CHANNEL).to(device)
-    dp_detector.load_state_dict(torch.load(args.detector_weights))
+    dp_detector.load_state_dict(torch.load(args.detector_weights, map_location=torch.device('cpu')))
     dp_detector.eval()
-    detect_carla_image(dp_detector, device, args, carla_ipm_dir="/home/hugoliu/github/dataset/carla_ipm")
+    detect_carla_image(dp_detector, device, args, carla_ipm_dir="./dataset/carla")
 
 if __name__ == '__main__':
     args = config.get_parser_for_inference().parse_args()
     args.detector_weights = "weights/dmpr_pretrained_weights.pth"
     args.inference_slot = True
-    inference_detector(args)
+    main(args)
    
