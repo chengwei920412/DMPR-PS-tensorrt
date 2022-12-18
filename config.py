@@ -10,7 +10,7 @@ NUM_FEATURE_MAP_CHANNEL = 6
 # image_size / 2^5 = 512 / 32 = 16
 FEATURE_MAP_SIZE = 16
 # Threshold used to filter marking points too close to image boundary
-BOUNDARY_THRESH = 0.05
+BOUNDARY_THRESH = 0.0
 
 # Thresholds to determine whether an detected point match ground truth.
 SQUARED_DISTANCE_THRESH = 0.000277778  # 10 pixel in 600*600 image

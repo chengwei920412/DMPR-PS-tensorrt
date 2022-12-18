@@ -52,24 +52,16 @@ def detect_carla_image(detector, device, args, carla_ipm_dir):
             mp["idx"] = idx
             idx += 1
             mp["conf"] = float(conf)
-            mp["type"] = float(marking_point.shape)
+            mp["shape"] = float(marking_point.shape)
+            if mp["shape"] > 0.5:
+                mp["type"] = "L"
+            else:
+                mp["type"] = "T"
             mp["x"] = float(marking_point.x)
             mp["y"] = float(marking_point.y)
             mp["direction"] = float(marking_point.direction)
             mp["p0x"] = int(result["width"] * mp["x"] - 0.5)
             mp["p0y"] = int(result["height"] * mp["y"] - 0.5)
-            # mp["dir_deg"] = float(mp["direction"] * 57.3)
-            # mp["dir_quad"] = 0.0
-            # if mp["direction"] >= 0.0 and mp["direction"] < math.pi/2:
-            #     mp["dir_quad"] = 0.0
-            # elif mp["direction"] >= math.pi/2 and mp["direction"] < math.pi:
-            #     mp["dir_quad"] = -math.pi/2
-            # elif mp["direction"] >= -math.pi/2 and mp["direction"] < 0.0:
-            #     mp["dir_quad"] = math.pi/2
-            # elif mp["direction"] >= -math.pi and mp["direction"] < -math.pi/2:
-            #     mp["dir_quad"] = math.pi
-            # mp["dir_quad0"] = mp["direction"] + mp["dir_quad"]
-            # mp["direction"] = mp["dir_quad0"]
             marking_points.append(mp)
         result["marking_points"] = marking_points
         results_list.append(result)
@@ -77,7 +69,10 @@ def detect_carla_image(detector, device, args, carla_ipm_dir):
         res = post_processor.calc_mean_direction()
         if res:
             post_processor.fix_direction()
+        post_processor.add_branches()
+        post_processor.infer_slots()
         post_processor.plot_points(image)
+        post_processor.plot_slots(image)
 
         counter += 1
         # plot_points(image, result)

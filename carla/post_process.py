@@ -1,15 +1,59 @@
 import math, os, json
-import cv2 as cv
+import cv2
 import numpy as np
 import torch
 
 class PostProcess(object):
     def __init__(self, result_json):
+        self.SLOT_LENGTH_M = 5.8
+        self.SLOT_WIDTH_M = 3.6
+        self.PPM = 640/20.0
+        self.SLOT_LENGTH = self.SLOT_LENGTH_M * self.PPM
+        self.SLOT_WIDTH = self.SLOT_WIDTH_M * self.PPM
+        self.VERTEX_TH = self.SLOT_WIDTH / 2.0
         self.DIR_CLUSTER_TH = math.pi/20 #+-9 degree
         self.DIR_COVER_TH = math.pi/4
         self.QUADS = [deg*math.pi/180 for deg in [-360, -270, -180, -90, 0, 90, 180, 270, 360]]
         self.result_json = result_json
         self.mean_direction = 0.0
+
+    def plot_slots(self, image):
+        print("total slots: {}".format(len(self.result_json["slots"])))
+        for slot in self.result_json["slots"]:
+            vertices = []
+            pt0 = (slot["p0x"], slot["p0y"])
+            pt1 = (slot["p1x"], slot["p1y"])
+            pt2 = (slot["p2x"], slot["p2y"])
+            pt3 = (slot["p3x"], slot["p3y"])
+            vertices.append(pt0)
+            vertices.append(pt1)
+            vertices.append(pt2)
+            vertices.append(pt3)
+            cx = int((pt0[0]+pt1[0]+pt2[0]+pt3[0])/4.0)
+            cy = int((pt0[1]+pt1[1]+pt2[1]+pt3[1])/4.0)
+            if cx < 20:
+                cx = 20
+            if cy < 20:
+                cy = 20
+            
+            cv2.putText(
+                img = image,
+                text = "{:d}".format(slot["idx"]),
+                org = (cx, cy),
+                fontFace = cv2.FONT_HERSHEY_DUPLEX,
+                fontScale = 1.0,
+                color = (0, 255, 255),
+                thickness = 2
+            )
+            for i in range(4):
+                cv2.line(
+                    img = image, 
+                    pt1 = vertices[i], 
+                    pt2 = vertices[(i+1)%4], 
+                    color = (0, 255, 0),
+                    thickness = 3,
+                    lineType = cv2.LINE_8
+                    )
 
     def plot_points(self, image):
         """Plot marking points on the image."""
@@ -36,18 +80,32 @@ class PostProcess(object):
             p1_y = int(round(p1_y))
             p2_x = int(round(p2_x))
             p2_y = int(round(p2_y))
-            cv.line(image, (p0_x, p0_y), (p1_x, p1_y), (0, 0, 255), 2)
-            mp_str = "{:.2f}, {:.2f}".format(mp["conf"], dir_deg)
-            cv.putText(image, mp_str, (p0_x, p0_y),
-                    cv.FONT_HERSHEY_PLAIN, 1.5, (0, 255, 255))
+            # cv2.line(image, (p0_x, p0_y), (p1_x, p1_y), (0, 0, 255), 2)
+            mp_str = "{:.2f}".format(dir_deg)
+            cv2.putText(image, mp_str, (p0_x, p0_y), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 200, 255))
+            
             # L-shape
-            if mp["type"] > 0.5:
-                cv.line(image, (p0_x, p0_y), (p2_x, p2_y), (0, 0, 255), 2)
+            if mp["shape"] > 0.5:
+                # cv2.line(image, (p0_x, p0_y), (p2_x, p2_y), (0, 0, 255), 2)
+                cv2.circle(
+                    img=image, 
+                    center=(p0_x, p0_y),
+                    radius=12, 
+                    color=(0,255,255), 
+                    thickness=6
+                )
             # T-shape
             else:
-                p3_x = int(round(p3_x))
-                p3_y = int(round(p3_y))
-                cv.line(image, (p2_x, p2_y), (p3_x, p3_y), (0, 0, 255), 2)
+                cv2.circle(
+                    img=image, 
+                    center=(p0_x, p0_y),
+                    radius=12, 
+                    color=(0,0,255), 
+                    thickness=6
+                )
+                # p3_x = int(round(p3_x))
+                # p3_y = int(round(p3_y))
+                # cv2.line(image, (p2_x, p2_y), (p3_x, p3_y), (0, 0, 255), 2)
 
     def calc_mean_direction(self):
         mps = sorted(self.result_json["marking_points"], key=lambda x:x["direction"])
@@ -81,7 +139,16 @@ class PostProcess(object):
             return True
         else:
             return False
-        
+
+    def set_direction(self, dir):
+        if dir > math.pi:
+            dir -= 2*math.pi
+        elif dir < -math.pi:
+            dir += 2*math.pi
+        else:
+            pass
+        return dir
+
     def fix_direction(self):
         for mp in self.result_json["marking_points"]:
             dir_diff_min = math.pi
@@ -97,10 +164,161 @@ class PostProcess(object):
 
             print("dir_diff_min: {:.2f}, quad: {:.2f}".format(dir_diff_min, quad))
             if dir_diff_min < self.DIR_COVER_TH:
-                dir = self.mean_direction + quad
-                if dir > math.pi:
-                    dir -= 2*math.pi
-                elif dir < -math.pi:
-                    dir += 2*math.pi
+                dir = self.set_direction(self.mean_direction + quad)
                 print("set mp[{}] direction from {:.2f} to {:.2f}".format(mp["idx"], mp["direction"], dir))
                 mp["direction"] = dir
+
+    def add_branches(self):
+        # add branches to each marking-point
+        for mp in self.result_json["marking_points"]:
+            bf = {}
+            bf["name"] = "forward"
+            bf["dir"] = mp["direction"]
+            bf["cos"] = math.cos(bf["dir"])
+            bf["sin"] = math.sin(bf["dir"])
+            bf["p1x"] = mp["p0x"] + bf["cos"]*self.SLOT_LENGTH
+            bf["p1y"] = mp["p0y"] + bf["sin"]*self.SLOT_LENGTH
+            bf["paired"] = False
+            mp["branch_forward"] = bf
+
+            br = {}
+            br["name"] = "right"
+            br["dir"] = self.set_direction(mp["direction"] + math.pi/2)
+            br["cos"] = math.cos(br["dir"])
+            br["sin"] = math.sin(br["dir"])
+            br["p2x"] = bf["p1x"] + br["cos"]*self.SLOT_WIDTH
+            br["p2y"] = bf["p1y"] + br["sin"]*self.SLOT_WIDTH
+            br["p3x"] = mp["p0x"] + br["cos"]*self.SLOT_WIDTH
+            br["p3y"] = mp["p0y"] + br["sin"]*self.SLOT_WIDTH
+            br["paired"] = False
+            mp["branch_right"] = br
+
+            if mp["type"] == "T":
+                bl = {}
+                bl["name"] = "left"
+                bl["dir"] = self.set_direction(mp["direction"] - math.pi/2)
+                bl["cos"] = math.cos(bl["dir"])
+                bl["sin"] = math.sin(bl["dir"])
+                bl["p2x"] = bf["p1x"] + bl["cos"]*self.SLOT_WIDTH
+                bl["p2y"] = bf["p1y"] + bl["sin"]*self.SLOT_WIDTH
+                bl["p3x"] = mp["p0x"] + bl["cos"]*self.SLOT_WIDTH
+                bl["p3y"] = mp["p0y"] + bl["sin"]*self.SLOT_WIDTH
+                bl["paired"] = False
+                mp["branch_left"] = bl
+
+    # search marking-point in radius: self.VERTEX_TH
+    def find_slot_vertex(self, px, py):
+        dist_min = self.result_json["width"]
+        mp_found = None
+        for mp in self.result_json["marking_points"]:
+            p0x = mp["p0x"]
+            p0y = mp["p0y"]
+            dist = math.sqrt((px-p0x)**2 + (py-p0y)**2)
+            if dist<self.VERTEX_TH and dist<dist_min:
+                dist_min = dist
+                mp_found = mp
+        return mp_found
+
+    def set_paired_branch(self, branch, mp):
+        bf = mp["branch_forward"]
+        rad_diff = abs(branch["dir"] - bf["dir"])
+        if abs(rad_diff - math.pi) < self.DIR_CLUSTER_TH:
+            if bf["paired"]:
+                print("WTF! branch forward already paired!")
+            bf["paired"] = True
+            return True
+
+        br = mp["branch_right"]
+        rad_diff = abs(branch["dir"] - br["dir"])
+        if abs(rad_diff - math.pi) < self.DIR_CLUSTER_TH:
+            if br["paired"]:
+                print("WTF! branch right already paired!")
+            br["paired"] = True
+            return True
+
+        if mp.__contains__("branch_left"):
+            bl = mp["branch_left"]
+            rad_diff = abs(branch["dir"] - bl["dir"])
+            if abs(rad_diff - math.pi) < self.DIR_CLUSTER_TH:
+                if bl["paired"]:
+                    print("WTF! branch left already paired!")
+                bl["paired"] = True
+                return True
+        return False
+
+    # search p1
+    def infer_branch_forward(self, bf):
+        p1x = bf["p1x"]
+        p1y = bf["p1y"]
+        mp = self.find_slot_vertex(p1x, p1y)
+        if mp:
+            bf["p1x"] = mp["p0x"]
+            bf["p1y"] = mp["p1y"]
+            assert self.set_paired_branch(bf, mp), "pair branch failed!"
+
+    # search p2 && p3
+    def infer_branch_right_left(self, brl):
+        p2x = brl["p2x"]
+        p2y = brl["p2y"]
+        mp = self.find_slot_vertex(p2x, p2y)
+        if mp:
+            brl["p2x"] = mp["p0x"]
+            brl["p2y"] = mp["p1y"]
+            assert self.set_paired_branch(brl, mp), "pair branch failed!"
+
+        p3x = brl["p3x"]
+        p3y = brl["p3y"]
+        mp = self.find_slot_vertex(p3x, p3y)
+        if mp:
+            brl["p3x"] = mp["p0x"]
+            brl["p3y"] = mp["p0y"]
+            assert self.set_paired_branch(brl, mp), "pair branch failed!"
+
+    def infer_slots(self):
+        self.result_json["slots"] = []
+        counter = 0
+        for mp in self.result_json["marking_points"]:
+            # only infer T- points
+            if mp["type"] != "T":
+                continue
+
+            # infer forward vertex
+            bf = mp["branch_forward"]
+            if not bf["paired"]:
+                self.infer_branch_forward(bf)
+
+            # infer right vertex
+            br = mp["branch_right"]
+            if not br["paired"]:
+                self.infer_branch_right_left(br)
+                sr = {}
+                sr["idx"] = counter
+                sr["p0x"] = mp["p0x"]
+                sr["p0y"] = mp["p0y"]
+                sr["p1x"] = int(bf["p1x"])
+                sr["p1y"] = int(bf["p1y"])
+                sr["p2x"] = int(br["p2x"])
+                sr["p2y"] = int(br["p2y"])
+                sr["p3x"] = int(br["p3x"])
+                sr["p3y"] = int(br["p3y"])
+                print("right slot[{}]: {}".format(counter, sr))
+                counter += 1
+                self.result_json["slots"].append(sr)
+
+            # infer left vertex
+            bl = mp["branch_left"]
+            if not bl["paired"]:
+                self.infer_branch_right_left(bl)
+                sl = {}
+                sl["idx"] = counter
+                sl["p0x"] = mp["p0x"]
+                sl["p0y"] = mp["p0y"]
+                sl["p1x"] = int(bf["p1x"])
+                sl["p1y"] = int(bf["p1y"])
+                sl["p2x"] = int(bl["p2x"])
+                sl["p2y"] = int(bl["p2y"])
+                sl["p3x"] = int(bl["p3x"])
+                sl["p3y"] = int(bl["p3y"])
+                print("left slot[{}]: {}".format(counter, sl))
+                counter += 1
+                self.result_json["slots"].append(sl)
