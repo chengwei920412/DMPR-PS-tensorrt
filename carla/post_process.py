@@ -5,17 +5,19 @@ import torch
 
 class PostProcess(object):
     def __init__(self, result_json):
-        self.SLOT_LENGTH_M = 5.8
-        self.SLOT_WIDTH_M = 3.6
-        self.PPM = 640/20.0
+        self.SLOT_LENGTH_M = 5.9
+        self.SLOT_WIDTH_M = 3.75
+        self.PPM = 640/18.0
         self.SLOT_LENGTH = self.SLOT_LENGTH_M * self.PPM
         self.SLOT_WIDTH = self.SLOT_WIDTH_M * self.PPM
         self.VERTEX_TH = self.SLOT_WIDTH / 2.0
         self.DIR_CLUSTER_TH = math.pi/20 #+-9 degree
+        self.BRANCH_PAIR_TH = math.pi/8
         self.DIR_COVER_TH = math.pi/4
         self.QUADS = [deg*math.pi/180 for deg in [-360, -270, -180, -90, 0, 90, 180, 270, 360]]
         self.result_json = result_json
         self.mean_direction = 0.0
+        self.virtual_vertex = []
 
     def plot_slots(self, image):
         print("total slots: {}".format(len(self.result_json["slots"])))
@@ -81,7 +83,7 @@ class PostProcess(object):
             p2_x = int(round(p2_x))
             p2_y = int(round(p2_y))
             # cv2.line(image, (p0_x, p0_y), (p1_x, p1_y), (0, 0, 255), 2)
-            mp_str = "{:.2f}".format(dir_deg)
+            mp_str = "{:.0f}".format(dir_deg)
             cv2.putText(image, mp_str, (p0_x, p0_y), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 200, 255))
             
             # L-shape
@@ -169,6 +171,7 @@ class PostProcess(object):
                 mp["direction"] = dir
 
     def add_branches(self):
+        self.virtual_vertex = []
         # add branches to each marking-point
         for mp in self.result_json["marking_points"]:
             bf = {}
@@ -180,6 +183,7 @@ class PostProcess(object):
             bf["p1y"] = mp["p0y"] + bf["sin"]*self.SLOT_LENGTH
             bf["paired"] = False
             mp["branch_forward"] = bf
+            self.virtual_vertex.append([bf["p1x"], bf["p1y"]])
 
             br = {}
             br["name"] = "right"
@@ -219,29 +223,52 @@ class PostProcess(object):
                 mp_found = mp
         return mp_found
 
+    # virtual vertex added by branches
+    def find_virtual_vertex(self, px, py):
+        dist_min = self.result_json["width"]
+        vv_found = None
+        for vv in self.virtual_vertex:
+            p0x = vv[0]
+            p0y = vv[1]
+            dist = math.sqrt((px-p0x)**2 + (py-p0y)**2)
+            if dist<self.VERTEX_TH and dist<dist_min:
+                dist_min = dist
+                vv_found = vv
+        return vv_found        
+
     def set_paired_branch(self, branch, mp):
         bf = mp["branch_forward"]
+        br = mp["branch_right"]
+        if mp.__contains__("branch_left"):
+            bl = mp["branch_left"]
+
         rad_diff = abs(branch["dir"] - bf["dir"])
-        if abs(rad_diff - math.pi) < self.DIR_CLUSTER_TH:
+        if abs(rad_diff - math.pi) < self.BRANCH_PAIR_TH:
             if bf["paired"]:
                 print("WTF! branch forward already paired!")
+                return False
             bf["paired"] = True
-            return True
+            br["paired"] = True
+            if mp.__contains__("branch_left"):
 
-        br = mp["branch_right"]
+                bl["paired"] = True
+            return True
+        
         rad_diff = abs(branch["dir"] - br["dir"])
-        if abs(rad_diff - math.pi) < self.DIR_CLUSTER_TH:
+        if abs(rad_diff - math.pi) < self.BRANCH_PAIR_TH:
             if br["paired"]:
                 print("WTF! branch right already paired!")
+                return False
             br["paired"] = True
             return True
 
         if mp.__contains__("branch_left"):
             bl = mp["branch_left"]
             rad_diff = abs(branch["dir"] - bl["dir"])
-            if abs(rad_diff - math.pi) < self.DIR_CLUSTER_TH:
+            if abs(rad_diff - math.pi) < self.BRANCH_PAIR_TH:
                 if bl["paired"]:
                     print("WTF! branch left already paired!")
+                    return False
                 bl["paired"] = True
                 return True
         return False
@@ -253,8 +280,12 @@ class PostProcess(object):
         mp = self.find_slot_vertex(p1x, p1y)
         if mp:
             bf["p1x"] = mp["p0x"]
-            bf["p1y"] = mp["p1y"]
-            assert self.set_paired_branch(bf, mp), "pair branch failed!"
+            bf["p1y"] = mp["p0y"]
+            # assert self.set_paired_branch(bf, mp), "pair branch failed!"
+            if not self.set_paired_branch(bf, mp):
+                print("WTF! pair branch forward failed")
+                return False
+        return True
 
     # search p2 && p3
     def infer_branch_right_left(self, brl):
@@ -263,8 +294,17 @@ class PostProcess(object):
         mp = self.find_slot_vertex(p2x, p2y)
         if mp:
             brl["p2x"] = mp["p0x"]
-            brl["p2y"] = mp["p1y"]
-            assert self.set_paired_branch(brl, mp), "pair branch failed!"
+            brl["p2y"] = mp["p0y"]
+            # assert self.set_paired_branch(brl, mp), "pair branch failed!"
+            if not self.set_paired_branch(brl, mp):
+                print("WTF! pair branch right or left failed")
+                return False
+        else:
+            vv = self.find_virtual_vertex(p2x, p2y)
+            if vv:
+                print("find virtual vertex: [{:.1f}, {:.1f}]".format(vv[0], vv[1]))
+                brl["p2x"] = vv[0]
+                brl["p2y"] = vv[1]
 
         p3x = brl["p3x"]
         p3y = brl["p3y"]
@@ -272,7 +312,11 @@ class PostProcess(object):
         if mp:
             brl["p3x"] = mp["p0x"]
             brl["p3y"] = mp["p0y"]
-            assert self.set_paired_branch(brl, mp), "pair branch failed!"
+            # assert self.set_paired_branch(brl, mp), "pair branch failed!"
+            if not self.set_paired_branch(brl, mp):
+                print("WTF! pair branch right or left failed")
+                return False
+        return True
 
     def infer_slots(self):
         self.result_json["slots"] = []
@@ -289,8 +333,7 @@ class PostProcess(object):
 
             # infer right vertex
             br = mp["branch_right"]
-            if not br["paired"]:
-                self.infer_branch_right_left(br)
+            if not br["paired"] and self.infer_branch_right_left(br):
                 sr = {}
                 sr["idx"] = counter
                 sr["p0x"] = mp["p0x"]
@@ -307,8 +350,7 @@ class PostProcess(object):
 
             # infer left vertex
             bl = mp["branch_left"]
-            if not bl["paired"]:
-                self.infer_branch_right_left(bl)
+            if not bl["paired"] and self.infer_branch_right_left(bl):
                 sl = {}
                 sl["idx"] = counter
                 sl["p0x"] = mp["p0x"]

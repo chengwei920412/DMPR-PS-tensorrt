@@ -1,3 +1,7 @@
+# ONNX
+1. input: float32[1,3,512,512]   output:  [1,6,16,16]
+
+
 # DMPR-PS
 
 This is the implementation of [DMPR-PS](https://github.com/Teoge/DMPR-PS/blob/master/DMPR-PS.pdf) using PyTorch.

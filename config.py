@@ -100,7 +100,7 @@ def get_parser_for_inference():
                         help="Video path if you choose to inference video.")
     parser.add_argument('--inference_slot', action='store_true',
                         help="Perform slot inference.")
-    parser.add_argument('--thresh', type=float, default=0.5,
+    parser.add_argument('--thresh', type=float, default=0.8,
                         help="Detection threshold.")
     parser.add_argument('--save', action='store_true',
                         help="Save detection result to file.")

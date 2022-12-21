@@ -1,5 +1,5 @@
 """Inference demo of directional point detector."""
-import math, os, json
+import math, os, json, sys
 import cv2 as cv
 import numpy as np
 import torch
@@ -14,16 +14,48 @@ def preprocess_image(image):
     """Preprocess numpy image to torch tensor."""
     if image.shape[0] != 512 or image.shape[1] != 512:
         image = cv.resize(image, (512, 512))
-    return torch.unsqueeze(ToTensor()(image), 0)
+    t = torch.unsqueeze(ToTensor()(image), 0)
+    print("ToTensor min: {}, max: {}".format(torch.min(t), torch.max(t)))
+    return t
+
+# preprocess using preprocess_image
+def preprocess_image_cv(image):
+    if image.shape[0] != 512 or image.shape[1] != 512:
+        image = cv.resize(image, (512, 512))
+    print("cv image shape: {}".format(image.shape))
+    img = cv.dnn.blobFromImage(
+        image=image,
+        scalefactor=1.0/255,
+        size=(512, 512),
+        mean=(0, 0, 0),
+        swapRB=False,
+        crop=False
+    )
+    t = torch.from_numpy(img)
+    print("blob tensor shape: {}".format(img.shape))
+    return t
 
 def detect_marking_points(detector, image, thresh, device):
     """Given image read from opencv, return detected marking points."""
-    prediction = detector(preprocess_image(image).to(device))
+    # img = preprocess_image(image).to(device)
+    img = preprocess_image_cv(image).to(device)
+    print("img shape: {}".format(img.shape))
+    prediction = detector(img)
+    # torch.onnx.export(detector, img, "./dmpr.onnx", opset_version=13, verbose=True, do_constant_folding=True)
+    # sys.exit(0)
     return get_predicted_points(prediction[0], thresh)
 
 def detect_carla_image(detector, device, args, carla_ipm_dir):
     output_dir = "./output/"
     files = os.listdir(carla_ipm_dir)
+    files.sort()
+
+    writer = cv.VideoWriter(
+        filename=output_dir+"slots.mp4", 
+        fourcc=cv.VideoWriter_fourcc('m', 'p', '4', 'v'), 
+        fps=20, 
+        frameSize=(640, 640)
+    )
     counter = 0
     results_list = []
     for fname in files:
@@ -75,12 +107,11 @@ def detect_carla_image(detector, device, args, carla_ipm_dir):
         post_processor.plot_slots(image)
 
         counter += 1
-        # plot_points(image, result)
-        # plot_slots(image, pred_points, slots)
         # cv.imshow('demo', image)
         # cv.waitKey(1)
         # if args.save:
-        cv.imwrite(output_fullpath, image, [int(cv.IMWRITE_JPEG_QUALITY), 100])
+        # cv.imwrite(output_fullpath, image, [int(cv.IMWRITE_JPEG_QUALITY), 100])
+        writer.write(image)
     # print(results_list)
 
     # save json
@@ -89,6 +120,7 @@ def detect_carla_image(detector, device, args, carla_ipm_dir):
         for dict in results_list:
             json.dump(dict, fd, ensure_ascii=False)
             fd.write("\n")
+    writer.release()
 
 def main(args):
     """Inference demo of directional point detector."""
@@ -99,7 +131,7 @@ def main(args):
         3, args.depth_factor, config.NUM_FEATURE_MAP_CHANNEL).to(device)
     dp_detector.load_state_dict(torch.load(args.detector_weights, map_location=torch.device('cpu')))
     dp_detector.eval()
-    detect_carla_image(dp_detector, device, args, carla_ipm_dir="./dataset/carla")
+    detect_carla_image(dp_detector, device, args, carla_ipm_dir="./dataset/carla/")
 
 if __name__ == '__main__':
     args = config.get_parser_for_inference().parse_args()
