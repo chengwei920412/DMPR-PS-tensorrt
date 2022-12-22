@@ -9,6 +9,8 @@ from data import get_predicted_points, pair_marking_points, calc_point_squre_dis
 from model import DirectionalPointDetector
 from util import Timer
 from carla.post_process import PostProcess
+from trt.scripts.onnx2trt_test import TrtWrapper
+from thop import profile
 
 def preprocess_image(image):
     """Preprocess numpy image to torch tensor."""
@@ -18,10 +20,10 @@ def preprocess_image(image):
     print("ToTensor min: {}, max: {}".format(torch.min(t), torch.max(t)))
     return t
 
-# preprocess using preprocess_image
+# preprocess using cv.dnn.blobFromImage
 def preprocess_image_cv(image):
-    if image.shape[0] != 512 or image.shape[1] != 512:
-        image = cv.resize(image, (512, 512))
+    # if image.shape[0] != 512 or image.shape[1] != 512:
+    #     image = cv.resize(image, (512, 512))
     print("cv image shape: {}".format(image.shape))
     img = cv.dnn.blobFromImage(
         image=image,
@@ -50,6 +52,9 @@ def detect_carla_image(detector, device, args, carla_ipm_dir):
     files = os.listdir(carla_ipm_dir)
     files.sort()
 
+    ### run trt model
+    # detector_trt = TrtWrapper("./trt/dmpr_fp16.trt")
+
     writer = cv.VideoWriter(
         filename=output_dir+"slots.mp4", 
         fourcc=cv.VideoWriter_fourcc('m', 'p', '4', 'v'), 
@@ -64,7 +69,26 @@ def detect_carla_image(detector, device, args, carla_ipm_dir):
         output_fullpath = output_dir + "/" + fname
 
         image = cv.imread(fullpath)
-        pred_points = detect_marking_points(detector, image, args.thresh, device)
+        # preprocess: numpy to torch.tensor
+        image_t = preprocess_image_cv(image).to(device)
+        
+        ### run torch model
+        prediction = detector(image_t)
+        ### macs: 23 172 481 024.0, params: 30 307 168.0
+        # macs, params = profile(detector, [image_t])
+        # print("macs: {}, params: {}".format(macs, params))
+        # sys.exit(0)
+
+        ### run trt model
+        # input_list = [image_t]
+        # output_shape_list = [[1, 6, 16, 16]]
+        # output_list = detector_trt.run(input_list, output_shape_list)
+        # prediction = output_list[0]
+
+        # postprocess
+        pred_points = get_predicted_points(prediction[0], args.thresh)
+        print("pred_points count: {}".format(len(pred_points)))
+        # pred_points = detect_marking_points(detector, image, args.thresh, device)
         # slots = None
         if pred_points and args.inference_slot:
             pass
@@ -127,8 +151,7 @@ def main(args):
     args.cuda = not args.disable_cuda and torch.cuda.is_available()
     device = torch.device('cuda:' + str(args.gpu_id) if args.cuda else 'cpu')
     torch.set_grad_enabled(False)
-    dp_detector = DirectionalPointDetector(
-        3, args.depth_factor, config.NUM_FEATURE_MAP_CHANNEL).to(device)
+    dp_detector = DirectionalPointDetector(3, args.depth_factor, config.NUM_FEATURE_MAP_CHANNEL).to(device)
     dp_detector.load_state_dict(torch.load(args.detector_weights, map_location=torch.device('cpu')))
     dp_detector.eval()
     detect_carla_image(dp_detector, device, args, carla_ipm_dir="./dataset/carla/")

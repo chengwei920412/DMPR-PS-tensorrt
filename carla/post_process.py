@@ -83,7 +83,7 @@ class PostProcess(object):
             p2_x = int(round(p2_x))
             p2_y = int(round(p2_y))
             # cv2.line(image, (p0_x, p0_y), (p1_x, p1_y), (0, 0, 255), 2)
-            mp_str = "{:.0f}".format(dir_deg)
+            mp_str = "{:.2f}".format(mp["conf"])
             cv2.putText(image, mp_str, (p0_x, p0_y), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 200, 255))
             
             # L-shape
