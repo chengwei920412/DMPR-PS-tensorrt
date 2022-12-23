@@ -1,11 +1,11 @@
 """Defines related function to process defined data structure."""
-import math
+import math, sys
 import numpy as np
 import torch
 import config
 from data.struct import MarkingPoint, detemine_point_shape
 
-
+# logically useless
 def non_maximum_suppression(pred_points):
     """Perform non-maxmum suppression on marking points."""
     suppressed = [False] * len(pred_points)
@@ -24,6 +24,7 @@ def non_maximum_suppression(pred_points):
         for i, supres in enumerate(suppressed):
             if not supres:
                 unsupres_pred_points.append(pred_points[i])
+        print("non_maximum_suppression: {}".format(len(unsupres_pred_points)))
         return unsupres_pred_points
     return pred_points
 
@@ -33,6 +34,7 @@ def get_predicted_points(prediction, thresh):
     assert isinstance(prediction, torch.Tensor)
     predicted_points = []
     prediction = prediction.detach().cpu().numpy()
+    # print("get_predicted_points: {}".format(prediction.shape))
     for i in range(prediction.shape[1]):
         for j in range(prediction.shape[2]):
             if prediction[0, i, j] >= thresh:

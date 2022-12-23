@@ -114,8 +114,11 @@ class PostProcess(object):
         # print(mps)
         cluster_list = []
         for mp0 in mps:
+            cluster_list.clear()
             # print("direction: {}".format(mp0["direction"]))
             dir0 = mp0["direction"]
+            mp0["dir_quad"] = dir0
+            cluster_list.append(mp0)
             for mp in mps:
                 if mp["idx"] == mp0["idx"]:
                     continue
@@ -126,21 +129,17 @@ class PostProcess(object):
                         cluster_list.append(mp)
                         break
             print("cluster on mp[{}]: {}".format(mp0["idx"], len(cluster_list)))
-            if len(cluster_list) < len(mps)/2:
+            if len(cluster_list) < len(mps)/2+1:
                 print("mp[{}] is outlier, continue".format(mp0["idx"]))
-                cluster_list.clear()
                 continue
             else:
                 print("mp[{}] cluster done".format(mp0["idx"]))
-                break
+                for mp in cluster_list:
+                    self.mean_direction += mp["dir_quad"]
+                self.mean_direction /= len(cluster_list)
+                return True
 
-        if len(cluster_list) > 0:
-            for mp in cluster_list:
-                self.mean_direction += mp["dir_quad"]
-            self.mean_direction /= len(cluster_list)
-            return True
-        else:
-            return False
+        return False
 
     def set_direction(self, dir):
         if dir > math.pi:
