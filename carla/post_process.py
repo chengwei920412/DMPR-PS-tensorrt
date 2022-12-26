@@ -7,7 +7,7 @@ class PostProcess(object):
     def __init__(self, result_json):
         self.SLOT_LENGTH_M = 5.9
         self.SLOT_WIDTH_M = 3.75
-        self.PPM = 640/18.0
+        self.PPM = 512/18.0
         self.SLOT_LENGTH = self.SLOT_LENGTH_M * self.PPM
         self.SLOT_WIDTH = self.SLOT_WIDTH_M * self.PPM
         self.VERTEX_TH = self.SLOT_WIDTH / 2.0

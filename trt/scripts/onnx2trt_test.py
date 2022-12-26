@@ -107,7 +107,7 @@ class Onnx2TRT(object):
             calib_dtype = trt.nptype(inputs[0].dtype)
             self.config.int8_calibrator.set_image_batcher(
                 ImageBatcher(calib_input, calib_shape, calib_dtype, max_num_images=calib_num_images,
-                            exact_batches=True, shuffle_files=True))
+                            exact_batches=True, shuffle_files=True, preprocessor="dmpr")) #preprocessor="dmpr"
 
     def create_engine(self, engine_path, precision="fp16"):
         self.config = self.builder.create_builder_config()
@@ -291,11 +291,11 @@ if __name__ == "__main__":
     dmpr_onnx_path = "../../export/model/dmpr.onnx"
     dmpr_trt_path = "../dmpr_int8.trt"
     onnxtrt = Onnx2TRT(verbose=True)
-    # onnxtrt.test_dmpr(
-    #     model_path=dmpr_onnx_path, 
-    #     trt_path=dmpr_trt_path,
-    #     precision="int8",
-    #     only_build_engine=False
-    # )
+    onnxtrt.test_dmpr(
+        model_path=dmpr_onnx_path, 
+        trt_path=dmpr_trt_path,
+        precision="int8",
+        only_build_engine=True
+    )
     # onnxtrt.print_version()
-    test_dmpr()
+    # test_dmpr()

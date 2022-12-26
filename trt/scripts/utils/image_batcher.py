@@ -18,7 +18,7 @@
 import os
 import sys
 import random
-
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -82,6 +82,7 @@ class ImageBatcher:
             self.height = self.shape[1]
             self.width = self.shape[2]
         assert all([self.format, self.width > 0, self.height > 0])
+        print("ImageBatcher format: {}, width: {}, height: {}".format(self.format, self.width, self.height))
 
         # Adapt the number of images as needed
         if max_num_images and 0 < max_num_images < len(self.images):
@@ -136,20 +137,48 @@ class ImageBatcher:
             pad.paste(image)
             return pad, scale
 
+        # preprocess using cv.dnn.blobFromImage
+        def dmpr_preprocess_image_cv(image):
+            # if image.shape[0] != 512 or image.shape[1] != 512:
+            #     image = cv.resize(image, (512, 512))
+            # print("cv image shape: {}".format(image.shape))
+            img = cv2.dnn.blobFromImage(
+                image=image,
+                scalefactor=1.0/255,
+                size=(512, 512),
+                mean=(0, 0, 0),
+                swapRB=False,
+                crop=False
+            )
+            return img
+
         scale = None
-        image = Image.open(image_path)
-        image = image.convert(mode='RGB')
         if self.preprocessor == "EfficientDet":
+            image = Image.open(image_path)
+            image = image.convert(mode='RGB')
             # For EfficientNet V2: Resize & Pad with ImageNet mean values and keep as [0,255] Normalization
             image, scale = resize_pad(image, (124, 116, 104))
             image = np.asarray(image, dtype=self.dtype)
+            # 
+            if self.format == "NCHW":
+                image = np.transpose(image, (2, 0, 1))
+            # (3, 512, 512)
+            print("EfficientDet preprocess output: {}".format(image.shape))
             # [0-1] Normalization, Mean subtraction and Std Dev scaling are part of the EfficientDet graph, so
             # no need to do it during preprocessing here
+        elif self.preprocessor == "dmpr":
+            image = cv2.imread(image_path)
+            image = dmpr_preprocess_image_cv(image)
+            # make sure scale is 1.0
+            scale = 1.0
+            image = np.asarray(image, dtype=self.dtype)
+            np.squeeze(image, axis=0)
+            # (3, 512, 512)
+            print("dmpr_preprocess_image_cv output: {}".format(image.shape))
         else:
             print("Preprocessing method {} not supported".format(self.preprocessor))
             sys.exit(1)
-        if self.format == "NCHW":
-            image = np.transpose(image, (2, 0, 1))
+
         return image, scale
 
     def get_batch(self):

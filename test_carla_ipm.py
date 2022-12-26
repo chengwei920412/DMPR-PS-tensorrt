@@ -53,13 +53,13 @@ def detect_carla_image(detector, device, args, carla_ipm_dir):
     files.sort()
 
     ### run trt model
-    # detector_trt = TrtWrapper("./trt/dmpr_fp16.trt")
+    detector_trt = TrtWrapper("./trt/dmpr_int8.trt")
 
     writer = cv.VideoWriter(
         filename=output_dir+"slots.mp4", 
         fourcc=cv.VideoWriter_fourcc('m', 'p', '4', 'v'), 
         fps=20, 
-        frameSize=(640, 640)
+        frameSize=(512, 512)
     )
     counter = 0
     results_list = []
@@ -73,17 +73,17 @@ def detect_carla_image(detector, device, args, carla_ipm_dir):
         image_t = preprocess_image_cv(image).to(device)
         
         ### run torch model
-        prediction = detector(image_t)
+        # prediction = detector(image_t)
         ### macs: 23 172 481 024.0, params: 30 307 168.0
         # macs, params = profile(detector, [image_t])
         # print("macs: {}, params: {}".format(macs, params))
         # sys.exit(0)
 
         ### run trt model
-        # input_list = [image_t]
-        # output_shape_list = [[1, 6, 16, 16]]
-        # output_list = detector_trt.run(input_list, output_shape_list)
-        # prediction = output_list[0]
+        input_list = [image_t]
+        output_shape_list = [[1, 6, 16, 16]]
+        output_list = detector_trt.run(input_list, output_shape_list)
+        prediction = output_list[0]
 
         # postprocess
         pred_points = get_predicted_points(prediction[0], args.thresh)
